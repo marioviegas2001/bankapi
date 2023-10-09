@@ -3,13 +3,9 @@ import os
 from logging.config import dictConfig
 
 import psycopg
-from flask import flash
 from flask import Flask
 from flask import jsonify
-from flask import redirect
-from flask import render_template
 from flask import request
-from flask import url_for
 from psycopg.rows import namedtuple_row
 
 
@@ -66,15 +62,7 @@ def account_index():
             ).fetchall()
             log.debug(f"Found {cur.rowcount} rows.")
 
-    # API-like response is returned to clients that request JSON explicitly (e.g., fetch)
-    if (
-        request.accept_mimetypes["application/json"]
-        and not request.accept_mimetypes["text/html"]
-    ):
-        return jsonify(accounts)
-
-    return render_template("account/index.html", accounts=accounts)
-
+    return jsonify(accounts)
 
 @app.route("/accounts/<account_number>/update", methods=("GET",))
 def account_update_view(account_number):
@@ -92,14 +80,13 @@ def account_update_view(account_number):
             ).fetchone()
             log.debug(f"Found {cur.rowcount} rows.")
 
-    return render_template("account/update.html", account=account)
-
+    return jsonify(account)
 
 @app.route("/accounts/<account_number>/update", methods=("POST",))
 def account_update_save(account_number):
     """Update the account balance."""
 
-    balance = request.form["balance"]
+    balance = request.args.get("balance")
 
     error = None
 
@@ -109,7 +96,7 @@ def account_update_save(account_number):
         error = "Balance is required to be decimal."
 
     if error is not None:
-        flash(error)
+        return error, 400 
     else:
         with psycopg.connect(conninfo=DATABASE_URL) as conn:
             with conn.cursor(row_factory=namedtuple_row) as cur:
@@ -122,7 +109,7 @@ def account_update_save(account_number):
                     {"account_number": account_number, "balance": balance},
                 )
             conn.commit()
-        return redirect(url_for("account_index"))
+        return "", 204
 
 
 @app.route("/accounts/<account_number>/delete", methods=("POST",))
@@ -139,7 +126,7 @@ def account_delete(account_number):
                 {"account_number": account_number},
             )
         conn.commit()
-    return redirect(url_for("account_index"))
+    return "", 204 
 
 
 @app.route("/ping", methods=("GET",))
