@@ -66,3 +66,7 @@ $ git push heroku main
 Take notice of the output of the previous command. It should tell you whether the app was sucessfuly deployed or not. Congratulations!
 
 8. Open the `appname` index page at https://appname.herokuapps.com/
+
+## Credits
+
+Flavio Martins
