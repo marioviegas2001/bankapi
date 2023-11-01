@@ -5,11 +5,8 @@ import os
 from logging.config import dictConfig
 
 import psycopg
-from flask import Flask
-from flask import jsonify
-from flask import request
+from flask import Flask, jsonify, request
 from psycopg.rows import namedtuple_row
-
 
 # postgres://{user}:{password}@{hostname}:{port}/{database-name}
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgres://db:db@postgres/db")
@@ -66,6 +63,7 @@ def account_index():
 
     return jsonify(accounts)
 
+
 @app.route("/accounts/<account_number>/update", methods=("GET",))
 def account_update_view(account_number):
     """Show the page to update the account balance."""
@@ -84,6 +82,7 @@ def account_update_view(account_number):
 
     return jsonify(account)
 
+
 @app.route("/accounts/<account_number>/update", methods=("POST",))
 def account_update_save(account_number):
     """Update the account balance."""
@@ -98,7 +97,7 @@ def account_update_save(account_number):
         error = "Balance is required to be decimal."
 
     if error is not None:
-        return error, 400 
+        return error, 400
     else:
         with psycopg.connect(conninfo=DATABASE_URL) as conn:
             with conn.cursor(row_factory=namedtuple_row) as cur:
@@ -128,7 +127,7 @@ def account_delete(account_number):
                 {"account_number": account_number},
             )
         conn.commit()
-    return "", 204 
+    return "", 204
 
 
 @app.route("/ping", methods=("GET",))
