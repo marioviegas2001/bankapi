@@ -6,11 +6,11 @@ from logging.config import dictConfig
 
 import psycopg
 from flask import Flask, jsonify, request
-from psycopg.rows import namedtuple_row
+from flask_cors import CORS
 
 # Use the DATABASE_URL environment variable if it exists, otherwise use the default.
 # Use the format postgres://username:password@hostname/database_name to connect to the database.
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgres://bank:bank@postgres/bank")
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgres://clearview:clearView@postgres/clearview")
 
 dictConfig(
     {
@@ -32,109 +32,100 @@ dictConfig(
 )
 
 app = Flask(__name__)
+CORS(app)
 app.config.from_prefixed_env()
 log = app.logger
 
+def connect_to_database():
+    """Establishes a connection to the PostgreSQL database."""
+    return psycopg.connect(DATABASE_URL)
 
-def is_decimal(s):
-    """Returns True if string is a parseable float number."""
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
+@app.route("/", methods=["GET"])
+def index():
+    """Welcome message."""
+    return jsonify({"message": "Welcome to the ClearView API!"})
 
-
-@app.route("/", methods=("GET",))
-@app.route("/accounts", methods=("GET",))
-def account_index():
-    """Show all the accounts, most recent first."""
-
-    with psycopg.connect(conninfo=DATABASE_URL) as conn:
-        with conn.cursor(row_factory=namedtuple_row) as cur:
-            accounts = cur.execute(
-                """
-                SELECT account_number, branch_name, balance
-                FROM account
-                ORDER BY account_number DESC;
-                """,
-                {},
-            ).fetchall()
-            log.debug(f"Found {cur.rowcount} rows.")
-
-    return jsonify(accounts)
-
-
-@app.route("/accounts/<account_number>/update", methods=("GET",))
-def account_update_view(account_number):
-    """Show the page to update the account balance."""
-
-    with psycopg.connect(conninfo=DATABASE_URL) as conn:
-        with conn.cursor(row_factory=namedtuple_row) as cur:
-            account = cur.execute(
-                """
-                SELECT account_number, branch_name, balance
-                FROM account
-                WHERE account_number = %(account_number)s;
-                """,
-                {"account_number": account_number},
-            ).fetchone()
-            log.debug(f"Found {cur.rowcount} rows.")
-
-    return jsonify(account)
-
-
-@app.route("/accounts/<account_number>/update", methods=("POST",))
-def account_update_save(account_number):
-    """Update the account balance."""
-
-    balance = request.args.get("balance")
-
-    error = None
-
-    if not balance:
-        error = "Balance is required."
-    if not is_decimal(balance):
-        error = "Balance is required to be decimal."
-
-    if error is not None:
-        return error, 400
+@app.route("/articles", methods=["GET"])
+def get_articles():
+    """Retrieve all articles from the database."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Article;")
+    articles = cur.fetchall()
+    conn.close()
+    if articles:
+        return jsonify({"articles": articles})
     else:
-        with psycopg.connect(conninfo=DATABASE_URL) as conn:
-            with conn.cursor(row_factory=namedtuple_row) as cur:
-                cur.execute(
-                    """
-                    UPDATE account
-                    SET balance = %(balance)s
-                    WHERE account_number = %(account_number)s;
-                    """,
-                    {"account_number": account_number, "balance": balance},
-                )
-            conn.commit()
-        return "", 204
+        return jsonify({"message": "No articles found"}), 404
 
+@app.route("/articles/<int:article_id>", methods=["GET"])
+def get_article(article_id):
+    """Retrieve a specific article by its ID."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Article WHERE id = %s;", (article_id,))
+    article = cur.fetchone()
+    conn.close()
+    if article:
+        return jsonify({"article": article})
+    else:
+        return jsonify({"message": "Article not found"}), 404
 
-@app.route("/accounts/<account_number>/delete", methods=("POST",))
-def account_delete(account_number):
-    """Delete the account."""
+@app.route("/articles", methods=["POST"])
+def save_article():
+    """Save a new article to the database or update the saved count if the URL already exists."""
+    data = request.json
+    url = data.get("url")
+    title = data.get("title")
+    author = data.get("author")
+    published_date = data.get("published_date")
 
-    with psycopg.connect(conninfo=DATABASE_URL) as conn:
-        with conn.cursor(row_factory=namedtuple_row) as cur:
-            cur.execute(
-                """
-                DELETE FROM account
-                WHERE account_number = %(account_number)s;
-                """,
-                {"account_number": account_number},
-            )
+    conn = connect_to_database()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            INSERT INTO Article (url, title, author, published_date)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (url) DO UPDATE
+            SET saved_count = Article.saved_count + 1
+            """, (url, title, author, published_date))
         conn.commit()
-    return "", 204
+        message = "Article saved successfully!"
+    except psycopg.errors.UniqueViolation:
+        message = "Article already exists. Saved count updated."
 
+    conn.close()
 
-@app.route("/ping", methods=("GET",))
-def ping():
-    log.debug("ping!")
-    return jsonify({"message": "pong!", "status": "success"})
+    return jsonify({"message": message})
+
+@app.route("/articles/<int:article_id>", methods=["PUT"])
+def update_article(article_id):
+    """Update an existing article in the database."""
+    data = request.json
+    title = data.get("title")
+    author = data.get("author")
+    published_date = data.get("published_date")
+
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("UPDATE Article SET title = %s, author = %s, published_date = %s WHERE id = %s;",
+                (title, author, published_date, article_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"message": "Article updated successfully!"})
+
+@app.route("/articles/<path:article_url>", methods=["DELETE"])
+def delete_article(article_url):
+    """Delete an existing article from the database."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM Article WHERE url = %s;", (article_url,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"message": "Article deleted successfully!"})
 
 
 if __name__ == "__main__":
