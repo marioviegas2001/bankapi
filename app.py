@@ -58,12 +58,12 @@ def get_articles():
     else:
         return jsonify({"message": "No articles found"}), 404
 
-@app.route("/articles/<int:article_id>", methods=["GET"])
+@app.route("/articles/<path:article_url>", methods=["GET"])
 def get_article(article_id):
-    """Retrieve a specific article by its ID."""
+    """Retrieve a specific article by its URL."""
     conn = connect_to_database()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM Article WHERE id = %s;", (article_id,))
+    cur.execute("SELECT * FROM Article WHERE url = %s;", (article_url,))
     article = cur.fetchone()
     conn.close()
     if article:
@@ -72,24 +72,27 @@ def get_article(article_id):
         return jsonify({"message": "Article not found"}), 404
 
 @app.route("/articles", methods=["POST"])
-def save_article():
-    """Save a new article to the database or update the saved count if the URL already exists."""
+def auto_save_article():
+    """Save a new article to the database or update the times viewed count if the URL already exists."""
     data = request.json
     url = data.get("url")
     title = data.get("title")
     author = data.get("author")
     published_date = data.get("published_date")
+    created_date = data.get("created_date")
+    modified_date = data.get("modified_date")
+    keywords = data.get("keywords")
 
     conn = connect_to_database()
     cur = conn.cursor()
 
     try:
         cur.execute("""
-            INSERT INTO Article (url, title, author, published_date)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO Article (url, title, author, published_date, created_date, modified_date, keywords)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (url) DO UPDATE
-            SET saved_count = Article.saved_count + 1
-            """, (url, title, author, published_date))
+            SET times_viewed = Article.times_viewed + 1
+            """, (url, title, author, published_date, created_date, modified_date, keywords))
         conn.commit()
         message = "Article saved successfully!"
     except psycopg.errors.UniqueViolation:
@@ -98,6 +101,17 @@ def save_article():
     conn.close()
 
     return jsonify({"message": message})
+
+@app.route("/articles/<path:article_url>/increment", methods=["PUT"])
+def manual_save_article(article_url):
+    """Increment the saved_count for the specified article."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("UPDATE Article SET saved_count = saved_count + 1 WHERE url = %s;", (article_url,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"message": "Saved count incremented successfully!"})
 
 @app.route("/articles/<int:article_id>", methods=["PUT"])
 def update_article(article_id):
