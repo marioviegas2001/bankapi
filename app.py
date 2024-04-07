@@ -77,22 +77,104 @@ def auto_save_article():
     data = request.json
     url = data.get("url")
     title = data.get("title")
-    author = data.get("author")
+    authors = data.get("author")  # Modify to accept list of authors
     published_date = data.get("published_date")
     created_date = data.get("created_date")
     modified_date = data.get("modified_date")
-    keywords = data.get("keywords")
+    keywords = data.get("keywords")  # Modify to accept list of keywords
+    source = data.get("source")
+
+    print("Received data:")
+    print("URL:", url)
+    print("Title:", title)
+    print("Authors:", authors)
+    print("Published Date:", published_date)
+    print("Created Date:", created_date)
+    print("Modified Date:", modified_date)
+    print("Keywords:", keywords)
+    print("Source:", source)
 
     conn = connect_to_database()
     cur = conn.cursor()
 
     try:
+        # Insert or update article
         cur.execute("""
-            INSERT INTO Article (url, title, author, published_date, created_date, modified_date, keywords)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO article (url, title, published_date, created_date, modified_date)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (url) DO UPDATE
-            SET times_viewed = Article.times_viewed + 1
-            """, (url, title, author, published_date, created_date, modified_date, keywords))
+            SET times_viewed = article.times_viewed + 1
+            RETURNING id
+            """, (url, title, published_date, created_date, modified_date))
+        article_id = cur.fetchone()[0]
+
+        # Insert or update authors
+        for author in authors:
+            # Union of SELECT queries to fetch existing author IDs or inserted author IDs
+            cur.execute("""
+                WITH inserted_author AS (
+                    INSERT INTO author (name)
+                    VALUES (%s)
+                    ON CONFLICT (name) DO NOTHING
+                    RETURNING author_id
+                )
+                SELECT * FROM inserted_author
+                UNION
+                SELECT author_id FROM author WHERE name = %s
+                """, (author, author))
+            author_id = cur.fetchone()[0]
+
+            # Insert article-author relationship
+            cur.execute("""
+                INSERT INTO article_author (article_id, author_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """, (article_id, author_id))
+
+        # Insert or update keywords
+        for keyword in keywords:
+            # Union of SELECT queries to fetch existing keyword IDs or inserted keyword IDs
+            cur.execute("""
+                WITH inserted_keyword AS (
+                    INSERT INTO keyword (keyword)
+                    VALUES (%s)
+                    ON CONFLICT (keyword) DO NOTHING
+                    RETURNING id
+                )
+                SELECT * FROM inserted_keyword
+                UNION
+                SELECT id FROM keyword WHERE keyword = %s
+                """, (keyword, keyword))
+            keyword_id = cur.fetchone()[0]
+
+            # Insert article-keyword relationship
+            cur.execute("""
+                INSERT INTO article_keyword (article_id, keyword_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """, (article_id, keyword_id))
+
+        # Union of SELECT queries to fetch existing source IDs or inserted source IDs
+        cur.execute("""
+            WITH inserted_source AS (
+                INSERT INTO source (name)
+                VALUES (%s)
+                ON CONFLICT (name) DO NOTHING
+                RETURNING id
+            )
+            SELECT * FROM inserted_source
+            UNION
+            SELECT id FROM source WHERE name = %s
+            """, (source, source))
+        source_id = cur.fetchone()[0]
+
+        # Insert article-source relationship
+        cur.execute("""
+            INSERT INTO article_source (article_id, source_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+            """, (article_id, source_id))
+
         conn.commit()
         message = "Article saved successfully!"
     except psycopg.errors.UniqueViolation:
@@ -101,6 +183,7 @@ def auto_save_article():
     conn.close()
 
     return jsonify({"message": message})
+
 
 @app.route("/articles/<path:article_url>/increment", methods=["PUT"])
 def manual_save_article(article_url):
