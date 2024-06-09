@@ -7,6 +7,13 @@ from logging.config import dictConfig
 import psycopg
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from sumy.parsers.plaintext import PlaintextParser
+from sumy.nlp.tokenizers import Tokenizer
+from sumy.summarizers.luhn import LuhnSummarizer as Summarizer
+from sumy.nlp.stemmers import Stemmer
+from sumy.utils import get_stop_words
+import nltk
+#nltk.download('punkt')
 
 # Use the DATABASE_URL environment variable if it exists, otherwise use the default.
 # Use the format postgres://username:password@hostname/database_name to connect to the database.
@@ -223,6 +230,26 @@ def delete_article(article_url):
     conn.close()
 
     return jsonify({"message": "Article deleted successfully!"})
+
+@app.route("/summarize", methods=["POST"])
+def summarize_article():
+    """Summarize the provided article text."""
+    data = request.json
+    article_text = data.get("article_text")
+    if not article_text:
+        return jsonify({"message": "Article text is required"}), 400
+
+    parser = PlaintextParser.from_string(article_text, Tokenizer("portuguese"))
+    stemmer = Stemmer("portuguese")
+
+    summarizer = Summarizer(stemmer)
+    summarizer.stop_words = get_stop_words("portuguese")
+
+    sentences = summarizer(parser.document, 3)  # Summarize to 5 sentences
+
+    summary = " ".join(str(sentence) for sentence in sentences)
+    
+    return jsonify({"summary": summary})
 
 
 if __name__ == "__main__":
