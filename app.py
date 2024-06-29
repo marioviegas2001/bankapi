@@ -92,6 +92,7 @@ def auto_save_article():
     keywords = data.get("keywords")  # Modify to accept list of keywords
     source = data.get("source")
     entities = data.get("entities")
+    image = data.get("imageUrl")
 
     print("Received data:")
     print("URL:", url)
@@ -103,6 +104,7 @@ def auto_save_article():
     print("Keywords:", keywords)
     print("Source:", source)
     print("Entities:", entities)
+    print("Image:", image)
 
     conn = connect_to_database()
     cur = conn.cursor()
@@ -110,12 +112,12 @@ def auto_save_article():
     try:
         # Insert or update article
         cur.execute("""
-            INSERT INTO article (url, title, published_date, created_date, modified_date)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO article (url, title, published_date, created_date, modified_date, image_url)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (url) DO UPDATE
             SET times_viewed = article.times_viewed + 1
             RETURNING id
-            """, (url, title, published_date, created_date, modified_date))
+            """, (url, title, published_date, created_date, modified_date, image))
         article_id = cur.fetchone()[0]
 
         # Insert or update authors
