@@ -43,6 +43,7 @@ CORS(app)
 app.config.from_prefixed_env()
 log = app.logger
 
+# Rever conexão 
 def connect_to_database():
     """Establishes a connection to the PostgreSQL database."""
     return psycopg.connect(DATABASE_URL)
@@ -90,6 +91,7 @@ def auto_save_article():
     modified_date = data.get("modified_date")
     keywords = data.get("keywords")  # Modify to accept list of keywords
     source = data.get("source")
+    entities = data.get("entities")
 
     print("Received data:")
     print("URL:", url)
@@ -100,6 +102,7 @@ def auto_save_article():
     print("Modified Date:", modified_date)
     print("Keywords:", keywords)
     print("Source:", source)
+    print("Entities:", entities)
 
     conn = connect_to_database()
     cur = conn.cursor()
@@ -160,6 +163,29 @@ def auto_save_article():
                 VALUES (%s, %s)
                 ON CONFLICT DO NOTHING
                 """, (article_id, keyword_id))
+
+        # Insert or update entities (entities are considered as keywords)
+        for entity in entities:
+            # Union of SELECT queries to fetch existing keyword IDs or inserted keyword IDs
+            cur.execute("""
+                WITH inserted_keyword AS (
+                    INSERT INTO keyword (keyword)
+                    VALUES (%s)
+                    ON CONFLICT (keyword) DO NOTHING
+                    RETURNING id
+                )
+                SELECT * FROM inserted_keyword
+                UNION
+                SELECT id FROM keyword WHERE keyword = %s
+                """, (entity, entity))
+            entity_id = cur.fetchone()[0]
+
+            # Insert article-keyword relationship
+            cur.execute("""
+                INSERT INTO article_keyword (article_id, keyword_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """, (article_id, entity_id))
 
         # Union of SELECT queries to fetch existing source IDs or inserted source IDs
         cur.execute("""

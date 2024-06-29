@@ -38,10 +38,20 @@ def test_delete_article(article_id):
     response = requests.delete(url)
     print(response.json())
 
-if __name__ == "__main__":
-    # Test create article
-    test_create_article()
+def test_summary():
+    url = f"{BASE_URL}/summarize"
+    data = {
+        "article_text": "This is a sample article text that will be summarized."
+    }
+    try:
+        response = requests.post(url, json=data)
+        response.raise_for_status()  # Raise an error for bad HTTP status codes
+        print(response.text)
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred: {e}")
 
+if __name__ == "__main__":
+    test_summary()
     # Test get all articles
     #test_get_articles()
 
@@ -54,3 +64,21 @@ if __name__ == "__main__":
 
     # Test delete article
     #test_delete_article(article_id)
+
+    """ SELECT * 
+    FROM article a
+    JOIN article_keyword ak ON a.id = ak.article_id
+    JOIN keyword k ON k.id = ak.keyword_id
+    WHERE k.keyword = 'Barragens' """
+
+    """ select * 
+    from article a
+    join article_source ars on ars.article_id = a.id
+    join source s on ars.source_id = s.id
+    where s.name = 'Público' """
+
+"""     select * 
+    from article a
+    join article_author aa on aa.article_id = a.id
+    join author auth on aa.author_id = auth.author_id
+    where auth.name Like 'P%' """
