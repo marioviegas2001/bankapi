@@ -2,19 +2,16 @@
 # Copyright (c) BDist Development Team
 # Distributed under the terms of the Modified BSD License.
 import os
+from dotenv import load_dotenv
 from logging.config import dictConfig
-
 import psycopg
+from bs4 import BeautifulSoup
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from sumy.parsers.plaintext import PlaintextParser
-from sumy.nlp.tokenizers import Tokenizer
-from sumy.summarizers.luhn import LuhnSummarizer as Summarizer
-from sumy.nlp.stemmers import Stemmer
-from sumy.utils import get_stop_words
-import nltk
-#nltk.download('punkt')
+from openai import OpenAI
 
+load_dotenv('API.env')
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Use the DATABASE_URL environment variable if it exists, otherwise use the default.
 # Use the format postgres://username:password@hostname/database_name to connect to the database.
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgres://clearview:clearView@postgres/clearview")
@@ -58,7 +55,7 @@ def get_articles():
     """Retrieve all articles from the database."""
     conn = connect_to_database()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM Article;")
+    cur.execute("SELECT * FROM Article ORDER BY id DESC;")
     articles = cur.fetchall()
     conn.close()
     if articles:
@@ -259,25 +256,96 @@ def delete_article(article_url):
 
     return jsonify({"message": "Article deleted successfully!"})
 
+def extract_text(html_content):
+    soup = BeautifulSoup(html_content, 'lxml')
+
+    # Remove script and style elements
+    for script_or_style in soup(["script", "style"]):
+        script_or_style.decompose()
+
+    # Get better breaks in the output text
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+    for p in soup.find_all("p"):
+        p.append("\n\n")  # Append two newlines after each paragraph
+
+    # Extract text, respecting the added newlines
+    text = soup.get_text()
+
+    # Clean up text by removing excessive spaces and empty lines
+    lines = (line.strip() for line in text.splitlines())
+    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+    text = '\n'.join(chunk for chunk in chunks if chunk)
+
+    return text
+
+@app.route('/clean', methods=['POST'])
+def clean():
+    data = request.get_json()
+    html_content = data.get('html_content', '')
+    cleaned_text = extract_text(html_content)
+    return jsonify({'cleaned_text': cleaned_text})
+
 @app.route("/summarize", methods=["POST"])
 def summarize_article():
-    """Summarize the provided article text."""
     data = request.json
     article_text = data.get("article_text")
-    if not article_text:
-        return jsonify({"message": "Article text is required"}), 400
-
-    parser = PlaintextParser.from_string(article_text, Tokenizer("portuguese"))
-    stemmer = Stemmer("portuguese")
-
-    summarizer = Summarizer(stemmer)
-    summarizer.stop_words = get_stop_words("portuguese")
-
-    sentences = summarizer(parser.document, 3)  # Summarize to 5 sentences
-
-    summary = " ".join(str(sentence) for sentence in sentences)
     
-    return jsonify({"summary": summary})
+    if not article_text:
+        return jsonify({"message": "Texto do artigo é necessário"}), 400
+
+    # Determine the length of the article and adjust the summarization depth
+    token_count = len(article_text.split())  # Simple token count based on spaces
+
+    if token_count > 25000:
+        # Directly return a message if the content is too long
+        return jsonify({"summary": "O conteúdo é muito longo para ser resumido diretamente. Por favor, divida o texto em partes menores."})
+
+    elif token_count > 2500:
+        # Selecting central parts of the article might be complex without knowing structure; simplifying by using first and last parts.
+        content_to_summarize = " ".join(article_text.split()[:500]) + " " + " ".join(article_text.split()[-500:])
+    else:
+        content_to_summarize = article_text
+
+    prompt_text = f"Resumir este texto em três frases densas de informação, de forma clara e sucinta: {content_to_summarize}"
+    
+    try:
+        # Make an API call to OpenAI
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "You are a helpful assistant whose task is to summarize articles in Portuguese of Portugal."
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt_text
+                        }
+                    ]
+                }
+            ],
+            max_tokens=256,  # You can adjust this value based on desired summary length
+            temperature=0.5,  # Controls the randomness of the response
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
+        )
+        #rint(response)
+        summary = response.choices[0].message.content
+        print(summary)
+        return jsonify({"summary": summary})
+    
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
 
 
 if __name__ == "__main__":
