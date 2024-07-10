@@ -339,10 +339,59 @@ def summarize_article():
             frequency_penalty=0,
             presence_penalty=0
         )
-        #rint(response)
         summary = response.choices[0].message.content
         print(summary)
         return jsonify({"summary": summary})
+    
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
+
+@app.route("/analyze_sources", methods=["POST"])
+def analyze_sources():
+    CREDIBLE_SOURCES = [
+    "Reuters", "BBC News", "Agence France-Presse", "Associated Press",
+    "The New York Times", "The Washington Post", "CNN", "Al Jazeera",
+    "Bloomberg", "The Guardian", "Agência Lusa", "Público", "Diário de Notícias",
+    "Expresso", "RTP (Rádio e Televisão de Portugal)", "Jornal de Notícias",
+    "Observador", "SIC Notícias"
+    ]
+    data = request.json
+    title = data.get("title")
+    description = data.get("description")
+    mainImageCredits = data.get("mainImageCredits")
+    article_text = data.get("article")
+    if not article_text:
+        return jsonify({"message": "Texto do artigo é necessário"}), 400
+
+    system_prompt = f""" You will be provided by the user with an Article. This Article could reference credible sources of information.
+    Your task is to extract the credible news sources of information that are cited in this article. Return a Python dictionary with the credible news sources you find and their respective count (show only the ones that have a count above 0), like this:
+    Article: {{*Sources found*}}
+    If the text provided does not contain the information needed then simply return an empty python dictionary, like this:
+    Article: {{}}
+    """ # PROMPT 90% BOA E TESTADA
+
+    user_prompt = f"""
+    Article: {article_text}
+    """
+    print("Title:", title)
+    print("description:", description)
+    print("Image Credits:", mainImageCredits)
+    print("Article:", article_text)
+
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=256,
+            temperature=0.1,
+        )
+        credible_sources_count = response.choices[0].message.content
+        return jsonify({"credible_sources_count": credible_sources_count})
     
     except Exception as e:
         return jsonify({"message": str(e)}), 500
