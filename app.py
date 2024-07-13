@@ -63,18 +63,71 @@ def get_articles():
     else:
         return jsonify({"message": "No articles found"}), 404
 
-@app.route("/articles/<path:article_url>", methods=["GET"])
-def get_article(article_id):
-    """Retrieve a specific article by its URL."""
+@app.route("/authors", methods=["GET"])
+def get_authors():
+    """Retrieve all authors from the database."""
     conn = connect_to_database()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM Article WHERE url = %s;", (article_url,))
-    article = cur.fetchone()
+    cur.execute("SELECT author_id, name FROM author ORDER BY name;")
+    authors = cur.fetchall()
     conn.close()
-    if article:
-        return jsonify({"article": article})
+    if authors:
+        return jsonify({"authors": [{"author_id": author[0], "name": author[1]} for author in authors]})
     else:
-        return jsonify({"message": "Article not found"}), 404
+        return jsonify({"message": "No authors found"}), 404
+
+@app.route("/articles/author/<author_name>", methods=["GET"])
+def get_articles_by_author(author_name):
+    """Retrieve articles by a specific author."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT a.* 
+        FROM Article a
+        JOIN article_author aa ON a.id = aa.article_id
+        JOIN author au ON aa.author_id = au.author_id
+        WHERE au.name = %s
+        ORDER BY a.published_date DESC;
+        """, (author_name,))
+    articles = cur.fetchall()
+    conn.close()
+    if articles:
+        return jsonify({"articles": articles})
+    else:
+        return jsonify({"message": "No articles found for this author"}), 404
+
+@app.route("/keywords", methods=["GET"])
+def get_keywords():
+    """Retrieve all keywords from the database."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("SELECT id, keyword FROM keyword ORDER BY keyword;")
+    keywords = cur.fetchall()
+    conn.close()
+    if keywords:
+        return jsonify({"keywords": [{"id": keyword[0], "keyword": keyword[1]} for keyword in keywords]})
+    else:
+        return jsonify({"message": "No keywords found"}), 404
+
+@app.route("/articles/keyword/<keyword>", methods=["GET"])
+def get_articles_by_keyword(keyword):
+    """Retrieve articles by a specific keyword."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT a.* 
+        FROM Article a
+        JOIN article_keyword ak ON a.id = ak.article_id
+        JOIN keyword k ON ak.keyword_id = k.id
+        WHERE k.keyword = %s
+        ORDER BY a.published_date DESC;
+        """, (keyword,))
+    articles = cur.fetchall()
+    conn.close()
+    if articles:
+        return jsonify({"articles": articles})
+    else:
+        return jsonify({"message": "No articles found for this keyword"}), 404
 
 @app.route("/articles", methods=["POST"])
 def auto_save_article():
@@ -227,23 +280,6 @@ def manual_save_article(article_url):
     conn.close()
 
     return jsonify({"message": "Saved count incremented successfully!"})
-
-@app.route("/articles/<int:article_id>", methods=["PUT"])
-def update_article(article_id):
-    """Update an existing article in the database."""
-    data = request.json
-    title = data.get("title")
-    author = data.get("author")
-    published_date = data.get("published_date")
-
-    conn = connect_to_database()
-    cur = conn.cursor()
-    cur.execute("UPDATE Article SET title = %s, author = %s, published_date = %s WHERE id = %s;",
-                (title, author, published_date, article_id))
-    conn.commit()
-    conn.close()
-
-    return jsonify({"message": "Article updated successfully!"})
 
 @app.route("/articles/<path:article_url>", methods=["DELETE"])
 def delete_article(article_url):

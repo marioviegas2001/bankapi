@@ -5,4 +5,4 @@ test2.py
 test3.py
 test4.py
 *.env
-prompt.py
+prompts.py
