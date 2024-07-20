@@ -63,6 +63,32 @@ def get_articles():
     else:
         return jsonify({"message": "No articles found"}), 404
 
+@app.route("/articles/<path:article_url>", methods=["GET"])
+def get_article(article_url):
+    """Retrieve a specific article by its URL."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM Article WHERE url = %s;", (article_url,))
+    article = cur.fetchone()
+    conn.close()
+    if article:
+        # Assuming the article content is in the respective columns
+        article_data = {
+            "id": article[0],
+            "url": article[1],
+            "title": article[2],
+            "published_date": article[3],
+            "image_url": article[8],
+            "cleaned_text": article[9],
+            "summary": article[10],
+            "fk": article[11],
+            "reading_time": article[12],
+        }
+        return jsonify({"article": article_data})
+    else:
+        return jsonify({"message": "Article not found"}), 404
+
+
 @app.route("/authors", methods=["GET"])
 def get_authors():
     """Retrieve all authors from the database."""
@@ -143,6 +169,10 @@ def auto_save_article():
     source = data.get("source")
     entities = data.get("entities")
     image = data.get("imageUrl")
+    cleaned_text = data.get("cleaned_text")
+    summary = data.get("summary")
+    reading_time = data.get("readingTime")
+    fk = data.get("fk")
 
     print("Received data:")
     print("URL:", url)
@@ -155,6 +185,10 @@ def auto_save_article():
     print("Source:", source)
     print("Entities:", entities)
     print("Image:", image)
+    print("Cleaned Text:", cleaned_text)
+    print("Summary:", summary)
+    print("Reading Time:", reading_time)
+    print("Fk:", fk)
 
     conn = connect_to_database()
     cur = conn.cursor()
@@ -162,12 +196,12 @@ def auto_save_article():
     try:
         # Insert or update article
         cur.execute("""
-            INSERT INTO article (url, title, published_date, created_date, modified_date, image_url)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO article (url, title, published_date, created_date, modified_date, image_url, cleaned_text, summary, reading_time, fk)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (url) DO UPDATE
             SET times_viewed = article.times_viewed + 1
             RETURNING id
-            """, (url, title, published_date, created_date, modified_date, image))
+            """, (url, title, published_date, created_date, modified_date, image, cleaned_text, summary, reading_time, fk))
         article_id = cur.fetchone()[0]
 
         # Insert or update authors
@@ -348,7 +382,7 @@ def summarize_article():
     try:
         # Make an API call to OpenAI
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -410,7 +444,7 @@ def analyze_sources():
     
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
