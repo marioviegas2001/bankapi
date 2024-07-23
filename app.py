@@ -377,7 +377,7 @@ def summarize_article():
     else:
         content_to_summarize = article_text
 
-    prompt_text = f"Resumir este texto em três frases densas de informação, de forma clara e sucinta: {content_to_summarize}"
+    prompt_text = f"Resumir este texto em três frases densas de informação, de forma clara e sucinta, 5 linhas no máximo: {content_to_summarize}"
     
     try:
         # Make an API call to OpenAI
