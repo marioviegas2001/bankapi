@@ -333,6 +333,16 @@ def extract_text(html_content):
     for script_or_style in soup(["script", "style"]):
         script_or_style.decompose()
 
+    # Remove style attributes and class attributes from all tags
+    for tag in soup.find_all(True):
+        if 'style' in tag.attrs:
+            del tag.attrs['style']
+        if 'class' in tag.attrs:
+            del tag.attrs['class']
+
+    # Get the cleaned HTML after removing script and style elements and attributes
+    cleaned_html = str(soup)
+
     # Get better breaks in the output text
     for br in soup.find_all("br"):
         br.replace_with("\n")
@@ -347,14 +357,14 @@ def extract_text(html_content):
     chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
     text = '\n'.join(chunk for chunk in chunks if chunk)
 
-    return text
+    return text, cleaned_html
 
 @app.route('/clean', methods=['POST'])
 def clean():
     data = request.get_json()
     html_content = data.get('html_content', '')
-    cleaned_text = extract_text(html_content)
-    return jsonify({'cleaned_text': cleaned_text})
+    cleaned_text, cleaned_html = extract_text(html_content)
+    return jsonify({'cleaned_text': cleaned_text, 'cleaned_html': cleaned_html})
 
 @app.route("/summarize", methods=["POST"])
 def summarize_article():
