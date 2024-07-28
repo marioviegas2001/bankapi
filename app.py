@@ -63,6 +63,85 @@ def get_articles():
     else:
         return jsonify({"message": "No articles found"}), 404
 
+@app.route("/articles_with_details", methods=["GET"])
+def get_articles_with_details():
+    """Retrieve all articles with their authors, keywords, and source logo."""
+    conn = connect_to_database()
+    cur = conn.cursor()
+
+    # Fetch all articles
+    cur.execute("SELECT * FROM Article ORDER BY id DESC;")
+    articles = cur.fetchall()
+
+    articles_with_details = []
+
+    for article in articles:
+        article_id = article[0]
+        url = article[1]
+        title = article[2]
+        published_date = article[3]
+        image_url = article[8]
+        cleaned_text = article[9]
+        summary = article[10]
+        fk = article[11]
+        reading_time = article[12]
+
+        # Fetch authors for the article
+        cur.execute("""
+            SELECT au.author_id, au.name
+            FROM author au
+            JOIN article_author aa ON au.author_id = aa.author_id
+            WHERE aa.article_id = %s;
+        """, (article_id,))
+        authors = cur.fetchall()
+
+        # Fetch keywords for the article
+        cur.execute("""
+            SELECT k.id, k.keyword
+            FROM keyword k
+            JOIN article_keyword ak ON k.id = ak.keyword_id
+            WHERE ak.article_id = %s;
+        """, (article_id,))
+        keywords = cur.fetchall()
+
+        # Fetch source logo for the article
+        cur.execute("""
+            SELECT s.id, s.name, s.logo
+            FROM source s
+            JOIN article_source asrc ON s.id = asrc.source_id
+            WHERE asrc.article_id = %s;
+        """, (article_id,))
+        source = cur.fetchone()
+
+        article_data = {
+            "id": article_id,
+            "url": url,
+            "title": title,
+            "published_date": published_date,
+            "image_url": image_url,
+            "cleaned_text": cleaned_text,
+            "summary": summary,
+            "fk": fk,
+            "reading_time": reading_time,
+            "authors": [{"author_id": author[0], "name": author[1]} for author in authors],
+            "keywords": [{"id": keyword[0], "keyword": keyword[1]} for keyword in keywords],
+            "source": {
+                "id": source[0],
+                "name": source[1],
+                "logo": source[2]
+            } if source else None
+        }
+
+        articles_with_details.append(article_data)
+
+    conn.close()
+
+    if articles_with_details:
+        return jsonify({"articles": articles_with_details})
+    else:
+        return jsonify({"message": "No articles found"}), 404
+
+
 @app.route("/articles/<path:article_url>", methods=["GET"])
 def get_article(article_url):
     """Retrieve a specific article by its URL."""
@@ -167,7 +246,8 @@ def auto_save_article():
     modified_date = data.get("modified_date")
     keywords = data.get("keywords")  # Modify to accept list of keywords
     source = data.get("source")
-    entities = data.get("entities")
+    logo = data.get("logo")
+    #entities = data.get("entities")
     image = data.get("imageUrl")
     cleaned_text = data.get("cleaned_text")
     summary = data.get("summary")
@@ -183,7 +263,8 @@ def auto_save_article():
     print("Modified Date:", modified_date)
     print("Keywords:", keywords)
     print("Source:", source)
-    print("Entities:", entities)
+    print("Source_logo", logo)
+    #print("Entities:", entities)
     print("Image:", image)
     print("Cleaned Text:", cleaned_text)
     print("Summary:", summary)
@@ -250,41 +331,18 @@ def auto_save_article():
                 ON CONFLICT DO NOTHING
                 """, (article_id, keyword_id))
 
-        # Insert or update entities (entities are considered as keywords)
-        for entity in entities:
-            # Union of SELECT queries to fetch existing keyword IDs or inserted keyword IDs
-            cur.execute("""
-                WITH inserted_keyword AS (
-                    INSERT INTO keyword (keyword)
-                    VALUES (%s)
-                    ON CONFLICT (keyword) DO NOTHING
-                    RETURNING id
-                )
-                SELECT * FROM inserted_keyword
-                UNION
-                SELECT id FROM keyword WHERE keyword = %s
-                """, (entity, entity))
-            entity_id = cur.fetchone()[0]
-
-            # Insert article-keyword relationship
-            cur.execute("""
-                INSERT INTO article_keyword (article_id, keyword_id)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-                """, (article_id, entity_id))
-
         # Union of SELECT queries to fetch existing source IDs or inserted source IDs
         cur.execute("""
             WITH inserted_source AS (
-                INSERT INTO source (name)
-                VALUES (%s)
+                INSERT INTO source (name, logo)
+                VALUES (%s, %s)
                 ON CONFLICT (name) DO NOTHING
                 RETURNING id
             )
             SELECT * FROM inserted_source
             UNION
             SELECT id FROM source WHERE name = %s
-            """, (source, source))
+            """, (source, logo, source))
         source_id = cur.fetchone()[0]
 
         # Insert article-source relationship
