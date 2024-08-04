@@ -144,14 +144,44 @@ def get_articles_with_details():
 
 @app.route("/articles/<path:article_url>", methods=["GET"])
 def get_article(article_url):
-    """Retrieve a specific article by its URL."""
+    """Retrieve a specific article by its URL, including authors and keywords."""
     conn = connect_to_database()
     cur = conn.cursor()
+    
+    # Fetch the article
     cur.execute("SELECT * FROM Article WHERE url = %s;", (article_url,))
     article = cur.fetchone()
-    conn.close()
+    
     if article:
-        # Assuming the article content is in the respective columns
+        article_id = article[0]
+        
+        # Fetch authors for the article
+        cur.execute("""
+            SELECT au.author_id, au.name
+            FROM author au
+            JOIN article_author aa ON au.author_id = aa.author_id
+            WHERE aa.article_id = %s;
+        """, (article_id,))
+        authors = cur.fetchall()
+        
+        # Fetch keywords for the article
+        cur.execute("""
+            SELECT k.id, k.keyword
+            FROM keyword k
+            JOIN article_keyword ak ON k.id = ak.keyword_id
+            WHERE ak.article_id = %s;
+        """, (article_id,))
+        keywords = cur.fetchall()
+
+        # Fetch source for the article
+        cur.execute("""
+            SELECT s.id, s.name, s.logo
+            FROM source s
+            JOIN article_source asrc ON s.id = asrc.source_id
+            WHERE asrc.article_id = %s;
+        """, (article_id,))
+        source = cur.fetchone()
+        
         article_data = {
             "id": article[0],
             "url": article[1],
@@ -162,10 +192,21 @@ def get_article(article_url):
             "summary": article[10],
             "fk": article[11],
             "reading_time": article[12],
+            "authors": [{"author_id": author[0], "name": author[1]} for author in authors],
+            "keywords": [{"id": keyword[0], "keyword": keyword[1]} for keyword in keywords],
+            "source": {
+                "id": source[0],
+                "name": source[1],
+                "logo": source[2]
+            } if source else None
         }
+
+        conn.close()
         return jsonify({"article": article_data})
     else:
+        conn.close()
         return jsonify({"message": "Article not found"}), 404
+
 
 
 @app.route("/authors", methods=["GET"])
