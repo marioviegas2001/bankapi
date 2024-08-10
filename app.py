@@ -144,7 +144,7 @@ def get_articles_with_details():
 
 @app.route("/articles/<path:article_url>", methods=["GET"])
 def get_article(article_url):
-    """Retrieve a specific article by its URL, including authors, keywords, and mentioned sources."""
+    """Retrieve a specific article by its URL, including authors, keywords, mentioned sources, and associated questions."""
     conn = connect_to_database()
     cur = conn.cursor()
     
@@ -190,6 +190,15 @@ def get_article(article_url):
         """, (article_id,))
         mentioned_sources_rows = cur.fetchall()
 
+        # Fetch questions for the article
+        cur.execute("""
+            SELECT question, question_importance
+            FROM article_questions
+            WHERE article_id = %s
+            ORDER BY question_importance;
+        """, (article_id,))
+        questions = cur.fetchall()
+
         # Organize mentioned sources into a dictionary
         mentioned_sources = {"credible_news_sources": {}, "social_media": {}}
         for row in mentioned_sources_rows:
@@ -199,6 +208,9 @@ def get_article(article_url):
             elif source_type == "social_media":
                 mentioned_sources["social_media"][source_name] = count
         
+        # Organize the questions
+        questions_list = [{"question": question[0], "importance": question[1]} for question in questions]
+
         article_data = {
             "id": article[0],
             "url": article[1],
@@ -216,7 +228,8 @@ def get_article(article_url):
                 "name": source[1],
                 "logo": source[2]
             } if source else None,
-            "mentioned_sources": mentioned_sources
+            "mentioned_sources": mentioned_sources,
+            "questions": questions_list
         }
 
         conn.close()
@@ -224,6 +237,7 @@ def get_article(article_url):
     else:
         conn.close()
         return jsonify({"message": "Article not found"}), 404
+
 
 
 
@@ -307,13 +321,13 @@ def auto_save_article():
     keywords = data.get("keywords")  # Modify to accept list of keywords
     source = data.get("source")
     logo = data.get("logo")
-    # entities = data.get("entities")
     image = data.get("imageUrl")
     cleaned_text = data.get("cleaned_text")
     summary = data.get("summary")
     reading_time = data.get("readingTime")
     fk = data.get("fk")
     sources_mentioned = data.get("sources_mentioned")
+    article_questions = data.get("article_questions")
 
     print("Received data:")
     print("URL:", url)
@@ -325,13 +339,13 @@ def auto_save_article():
     print("Keywords:", keywords)
     print("Source:", source)
     print("Source_logo", logo)
-    # print("Entities:", entities)
     print("Image:", image)
     print("Cleaned Text:", cleaned_text)
     print("Summary:", summary)
     print("Reading Time:", reading_time)
     print("Fk:", fk)
     print("Sources Mentioned:", sources_mentioned)
+    print("Lateral Reading Questions", article_questions)
 
     conn = connect_to_database()
     cur = conn.cursor()
@@ -412,7 +426,6 @@ def auto_save_article():
         # Insert mentioned sources
         if sources_mentioned:
             for source_name, count in sources_mentioned.get('credible_news_sources', {}).items():
-                print("AAAAAAAAAA",source_name, count)
                 cur.execute("""
                     INSERT INTO mentioned_sources (article_id, source_type, source_name, count)
                     VALUES (%s, %s, %s, %s)
@@ -424,14 +437,27 @@ def auto_save_article():
                     VALUES (%s, %s, %s, %s)
                 """, (article_id, 'social_media', source_name, count))
 
+        # Insert article questions
+        if article_questions:
+            questions = article_questions.split("\n")
+            for i, question in enumerate(questions, start=1):
+                # Remove the numbering from the question
+                question_text = question.split(". ", 1)[-1]
+                question_importance = i
+                cur.execute("""
+                    INSERT INTO article_questions (article_id, question, question_importance)
+                    VALUES (%s, %s, %s)
+                """, (article_id, question_text, question_importance))
+
         conn.commit()
-        message = "Article and mentioned sources saved successfully!"
+        message = "Article, mentioned sources, and questions saved successfully!"
     except Exception as e:
         conn.rollback()
         message = f"Error: {str(e)}"
 
     conn.close()
     return jsonify({"message": message})
+
 
 
 
@@ -610,6 +636,67 @@ def analyze_sources():
     
     except Exception as e:
         return jsonify({"message": str(e)}), 500
+
+@app.route("/lateral_reading_questions", methods=["POST"])
+def lateral_reading_questions():
+    data = request.json
+    article_text = data.get("article")
+    if not article_text:
+        return jsonify({"message": "Texto do artigo é necessário"}), 400
+
+    system_prompt = """
+    Task Objective:
+    Use Named Entity Recognition (NER) to analyze the news article and identify key entities such as PER (Person), ORG (Organization), LOC (Location), and DAT (Date). Utilize these entities to formulate and rank questions that assess the trustworthiness of the information presented.
+    Detailed Analysis and Ranking Steps:
+        Source Verification: Verify the credibility and background of each identified entity, focusing on ORG and PER. Evaluate their authority, history, and potential biases relevant to the topic.
+        Claim Verification: Cross-check the claims associated with these entities against external sources for accuracy and contextual alignment.
+    Question Formulation and Ranking:
+        Target Specificity: Each question must specifically address an entity or claim in the article.
+        Conciseness and Clarity: Questions should be concise (no more than 120 characters) and self-contained.
+        Answerability: Frame questions that can be answered through lateral reading techniques, ideally by a single reliable source.
+        Importance Ranking: Rank the questions from the most critical to the least critical based on the potential impact on understanding the article's trustworthiness.
+        Language: All the questions will be provided in portuguese of Portugal and should always be formulated in portuguese of Portugal.
+    Output Requirement:
+        Produce a ranked list of 10 questions, starting with the most important to the least important, without additional explanations. These questions should probe the trustworthiness of the article effectively, focusing on the critical aspects highlighted in the analysis.
+    Logical Verification:
+        Before finalizing questions, verify that each is logically sound and directly relevant to the article's content. Ensure that questions are appropriate for the entities identified and reflect a meaningful inquiry into the article’s claims and credibility.
+    Example Questions (general format for guidance):
+    "What evidence supports the main claims made in the article?"
+    "Is the primary source of the article credible and recognized in their field?"
+    "Are there other expert opinions that support or contradict this perspective?"
+    "How does this information compare with established data or historical context?"
+    "What might be the potential biases of the sources or authors involved?"
+    "Can the statistical data presented be verified through other credible reports?"
+    "How has the topic been treated in other reputable publications?"
+    "Are there recent developments that affect the credibility of the information?"
+    "What are the implications of the article’s claims if they are true?"
+    "Is there a consensus among experts regarding the conclusions drawn?"
+    """
+
+    user_prompt = f"""
+    Article: {article_text}
+    """
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=512,
+            temperature=0.1,
+        )
+        questions = response.choices[0].message.content
+        print("Lateral Reading Questions:", questions)
+
+        # Safely evaluate or process the response to extract the questions if needed
+        # questions = eval(questions)  # If necessary, but usually, you'll handle the content directly
+
+        return jsonify({"lateral_reading_questions": questions})
+    
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
 
 
 if __name__ == "__main__":
