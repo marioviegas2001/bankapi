@@ -144,7 +144,7 @@ def get_articles_with_details():
 
 @app.route("/articles/<path:article_url>", methods=["GET"])
 def get_article(article_url):
-    """Retrieve a specific article by its URL, including authors and keywords."""
+    """Retrieve a specific article by its URL, including authors, keywords, and mentioned sources."""
     conn = connect_to_database()
     cur = conn.cursor()
     
@@ -181,6 +181,23 @@ def get_article(article_url):
             WHERE asrc.article_id = %s;
         """, (article_id,))
         source = cur.fetchone()
+
+        # Fetch mentioned sources for the article
+        cur.execute("""
+            SELECT source_type, source_name, count
+            FROM mentioned_sources
+            WHERE article_id = %s;
+        """, (article_id,))
+        mentioned_sources_rows = cur.fetchall()
+
+        # Organize mentioned sources into a dictionary
+        mentioned_sources = {"credible_news_sources": {}, "social_media": {}}
+        for row in mentioned_sources_rows:
+            source_type, source_name, count = row
+            if source_type == "credible_news_source":
+                mentioned_sources["credible_news_sources"][source_name] = count
+            elif source_type == "social_media":
+                mentioned_sources["social_media"][source_name] = count
         
         article_data = {
             "id": article[0],
@@ -198,7 +215,8 @@ def get_article(article_url):
                 "id": source[0],
                 "name": source[1],
                 "logo": source[2]
-            } if source else None
+            } if source else None,
+            "mentioned_sources": mentioned_sources
         }
 
         conn.close()
@@ -206,6 +224,7 @@ def get_article(article_url):
     else:
         conn.close()
         return jsonify({"message": "Article not found"}), 404
+
 
 
 
@@ -288,12 +307,13 @@ def auto_save_article():
     keywords = data.get("keywords")  # Modify to accept list of keywords
     source = data.get("source")
     logo = data.get("logo")
-    #entities = data.get("entities")
+    # entities = data.get("entities")
     image = data.get("imageUrl")
     cleaned_text = data.get("cleaned_text")
     summary = data.get("summary")
     reading_time = data.get("readingTime")
     fk = data.get("fk")
+    sources_mentioned = data.get("sources_mentioned")
 
     print("Received data:")
     print("URL:", url)
@@ -305,12 +325,13 @@ def auto_save_article():
     print("Keywords:", keywords)
     print("Source:", source)
     print("Source_logo", logo)
-    #print("Entities:", entities)
+    # print("Entities:", entities)
     print("Image:", image)
     print("Cleaned Text:", cleaned_text)
     print("Summary:", summary)
     print("Reading Time:", reading_time)
     print("Fk:", fk)
+    print("Sources Mentioned:", sources_mentioned)
 
     conn = connect_to_database()
     cur = conn.cursor()
@@ -328,7 +349,6 @@ def auto_save_article():
 
         # Insert or update authors
         for author in authors:
-            # Union of SELECT queries to fetch existing author IDs or inserted author IDs
             cur.execute("""
                 WITH inserted_author AS (
                     INSERT INTO author (name)
@@ -342,7 +362,6 @@ def auto_save_article():
                 """, (author, author))
             author_id = cur.fetchone()[0]
 
-            # Insert article-author relationship
             cur.execute("""
                 INSERT INTO article_author (article_id, author_id)
                 VALUES (%s, %s)
@@ -351,7 +370,6 @@ def auto_save_article():
 
         # Insert or update keywords
         for keyword in keywords:
-            # Union of SELECT queries to fetch existing keyword IDs or inserted keyword IDs
             cur.execute("""
                 WITH inserted_keyword AS (
                     INSERT INTO keyword (keyword)
@@ -365,14 +383,13 @@ def auto_save_article():
                 """, (keyword, keyword))
             keyword_id = cur.fetchone()[0]
 
-            # Insert article-keyword relationship
             cur.execute("""
                 INSERT INTO article_keyword (article_id, keyword_id)
                 VALUES (%s, %s)
                 ON CONFLICT DO NOTHING
                 """, (article_id, keyword_id))
 
-        # Union of SELECT queries to fetch existing source IDs or inserted source IDs
+        # Insert or update source
         cur.execute("""
             WITH inserted_source AS (
                 INSERT INTO source (name, logo)
@@ -386,21 +403,36 @@ def auto_save_article():
             """, (source, logo, source))
         source_id = cur.fetchone()[0]
 
-        # Insert article-source relationship
         cur.execute("""
             INSERT INTO article_source (article_id, source_id)
             VALUES (%s, %s)
             ON CONFLICT DO NOTHING
             """, (article_id, source_id))
 
+        # Insert mentioned sources
+        if sources_mentioned:
+            for source_name, count in sources_mentioned.get('credible_news_sources', {}).items():
+                print("AAAAAAAAAA",source_name, count)
+                cur.execute("""
+                    INSERT INTO mentioned_sources (article_id, source_type, source_name, count)
+                    VALUES (%s, %s, %s, %s)
+                """, (article_id, 'credible_news_source', source_name, count))
+
+            for source_name, count in sources_mentioned.get('social_media', {}).items():
+                cur.execute("""
+                    INSERT INTO mentioned_sources (article_id, source_type, source_name, count)
+                    VALUES (%s, %s, %s, %s)
+                """, (article_id, 'social_media', source_name, count))
+
         conn.commit()
-        message = "Article saved successfully!"
-    except psycopg.errors.UniqueViolation:
-        message = "Article already exists. Saved count updated."
+        message = "Article and mentioned sources saved successfully!"
+    except Exception as e:
+        conn.rollback()
+        message = f"Error: {str(e)}"
 
     conn.close()
-
     return jsonify({"message": message})
+
 
 
 @app.route("/articles/<path:article_url>/increment", methods=["PUT"])
