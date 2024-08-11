@@ -65,7 +65,7 @@ def get_articles():
 
 @app.route("/articles_with_details", methods=["GET"])
 def get_articles_with_details():
-    """Retrieve all articles with their authors, keywords, and source logo."""
+    """Retrieve all articles with their authors, keywords, source logo, and category."""
     conn = connect_to_database()
     cur = conn.cursor()
 
@@ -113,6 +113,15 @@ def get_articles_with_details():
         """, (article_id,))
         source = cur.fetchone()
 
+        # Fetch category for the article
+        cur.execute("""
+            SELECT category
+            FROM article_category
+            WHERE article_id = %s;
+        """, (article_id,))
+        category_row = cur.fetchone()
+        category = category_row[0] if category_row else None
+
         article_data = {
             "id": article_id,
             "url": url,
@@ -129,7 +138,8 @@ def get_articles_with_details():
                 "id": source[0],
                 "name": source[1],
                 "logo": source[2]
-            } if source else None
+            } if source else None,
+            "category": category
         }
 
         articles_with_details.append(article_data)
@@ -142,9 +152,10 @@ def get_articles_with_details():
         return jsonify({"message": "No articles found"}), 404
 
 
+
 @app.route("/articles/<path:article_url>", methods=["GET"])
 def get_article(article_url):
-    """Retrieve a specific article by its URL, including authors, keywords, mentioned sources, and associated questions."""
+    """Retrieve a specific article by its URL, including authors, keywords, mentioned sources, associated questions, and category."""
     conn = connect_to_database()
     cur = conn.cursor()
     
@@ -199,6 +210,15 @@ def get_article(article_url):
         """, (article_id,))
         questions = cur.fetchall()
 
+        # Fetch category for the article
+        cur.execute("""
+            SELECT category
+            FROM article_category
+            WHERE article_id = %s;
+        """, (article_id,))
+        category_row = cur.fetchone()
+        category = category_row[0] if category_row else None
+
         # Organize mentioned sources into a dictionary
         mentioned_sources = {"credible_news_sources": {}, "social_media": {}}
         for row in mentioned_sources_rows:
@@ -229,7 +249,8 @@ def get_article(article_url):
                 "logo": source[2]
             } if source else None,
             "mentioned_sources": mentioned_sources,
-            "questions": questions_list
+            "questions": questions_list,
+            "category": category
         }
 
         conn.close()
@@ -237,6 +258,7 @@ def get_article(article_url):
     else:
         conn.close()
         return jsonify({"message": "Article not found"}), 404
+
 
 
 
@@ -328,6 +350,7 @@ def auto_save_article():
     fk = data.get("fk")
     sources_mentioned = data.get("sources_mentioned")
     article_questions = data.get("article_questions")
+    article_category = data.get("article_category")
 
     print("Received data:")
     print("URL:", url)
@@ -346,6 +369,7 @@ def auto_save_article():
     print("Fk:", fk)
     print("Sources Mentioned:", sources_mentioned)
     print("Lateral Reading Questions", article_questions)
+    print("Category:", article_category)
 
     conn = connect_to_database()
     cur = conn.cursor()
@@ -449,14 +473,22 @@ def auto_save_article():
                     VALUES (%s, %s, %s)
                 """, (article_id, question_text, question_importance))
 
+        # Insert article category
+        if article_category:
+            cur.execute("""
+                INSERT INTO article_category (article_id, category)
+                VALUES (%s, %s)
+            """, (article_id, article_category))
+
         conn.commit()
-        message = "Article, mentioned sources, and questions saved successfully!"
+        message = "Article, mentioned sources, questions, and category saved successfully!"
     except Exception as e:
         conn.rollback()
         message = f"Error: {str(e)}"
 
     conn.close()
     return jsonify({"message": message})
+
 
 
 
@@ -579,6 +611,66 @@ def summarize_article():
         summary = response.choices[0].message.content
         print(summary)
         return jsonify({"summary": summary})
+    
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
+@app.route("/categorize_article", methods=["POST"])
+def categorize_article():
+    data = request.json
+    article_text = data.get("article_text")
+    
+    if not article_text:
+        return jsonify({"message": "Texto do artigo é necessário"}), 400
+
+    categories = [
+        "Notícias do Mundo",
+        "Notícias Nacionais",
+        "Política",
+        "Negócios e Economia",
+        "Tecnologia",
+        "Ciência e Ambiente",
+        "Saúde",
+        "Entretenimento",
+        "Desporto",
+        "Opinião e Editorial",
+        "Educação",
+        "Artes e Cultura",
+        "Crime e Justiça",
+        "Imobiliário e Desenvolvimento",
+        "Meteorologia",
+        "Viagens",
+        "Automóvel"
+    ]
+
+    prompt_text = f"""
+    Com base no conteúdo fornecido, classifique este artigo em uma das seguintes categorias:
+    {', '.join(categories)}.
+    Artigo: {article_text}
+    """
+    
+    try:
+        # Make an API call to OpenAI
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Você é um assistente útil cuja tarefa é categorizar artigos em Português de Portugal. A resposta fornecida deve ser apenas a categoria."
+                },
+                {
+                    "role": "user",
+                    "content": prompt_text
+                }
+            ],
+            max_tokens=100,  
+            temperature=0.3,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
+        )
+        category = response.choices[0].message.content.strip()
+        return jsonify({"category": category})
     
     except Exception as e:
         return jsonify({"message": str(e)}), 500
