@@ -155,7 +155,7 @@ def get_articles_with_details():
 
 @app.route("/articles/<path:article_url>", methods=["GET"])
 def get_article(article_url):
-    """Retrieve a specific article by its URL, including authors, keywords, mentioned sources, associated questions, and category."""
+    """Retrieve a specific article by its URL, including authors, keywords, mentioned sources, associated questions, category, and language analysis."""
     conn = connect_to_database()
     cur = conn.cursor()
     
@@ -219,6 +219,15 @@ def get_article(article_url):
         category_row = cur.fetchone()
         category = category_row[0] if category_row else None
 
+        # Fetch language analysis for the article
+        cur.execute("""
+            SELECT analysis_report
+            FROM language_analysis
+            WHERE article_id = %s;
+        """, (article_id,))
+        language_analysis_row = cur.fetchone()
+        language_analysis = language_analysis_row[0] if language_analysis_row else None
+
         # Organize mentioned sources into a dictionary
         mentioned_sources = {"credible_news_sources": {}, "social_media": {}}
         for row in mentioned_sources_rows:
@@ -250,7 +259,8 @@ def get_article(article_url):
             } if source else None,
             "mentioned_sources": mentioned_sources,
             "questions": questions_list,
-            "category": category
+            "category": category,
+            "language_analysis": language_analysis  # Add the language analysis to the response
         }
 
         conn.close()
@@ -258,7 +268,6 @@ def get_article(article_url):
     else:
         conn.close()
         return jsonify({"message": "Article not found"}), 404
-
 
 
 
@@ -351,6 +360,7 @@ def auto_save_article():
     sources_mentioned = data.get("sources_mentioned")
     article_questions = data.get("article_questions")
     article_category = data.get("article_category")
+    language_analysis = data.get("language_analysis")  # New field
 
     print("Received data:")
     print("URL:", url)
@@ -370,6 +380,7 @@ def auto_save_article():
     print("Sources Mentioned:", sources_mentioned)
     print("Lateral Reading Questions", article_questions)
     print("Category:", article_category)
+    print("Language Analysis:", language_analysis)  # New print statement
 
     conn = connect_to_database()
     cur = conn.cursor()
@@ -480,18 +491,21 @@ def auto_save_article():
                 VALUES (%s, %s)
             """, (article_id, article_category))
 
+        # Insert language analysis (as JSONB)
+        if language_analysis:
+            cur.execute("""
+                INSERT INTO language_analysis (article_id, analysis_report)
+                VALUES (%s, %s)
+            """, (article_id, language_analysis))
+
         conn.commit()
-        message = "Article, mentioned sources, questions, and category saved successfully!"
+        message = "Article, mentioned sources, questions, category, and language analysis saved successfully!"
     except Exception as e:
         conn.rollback()
         message = f"Error: {str(e)}"
 
     conn.close()
     return jsonify({"message": message})
-
-
-
-
 
 @app.route("/articles/<path:article_url>/increment", methods=["PUT"])
 def manual_save_article(article_url):
@@ -788,6 +802,69 @@ def lateral_reading_questions():
     
     except Exception as e:
         return jsonify({"message": str(e)}), 500
+
+@app.route("/analyze_language", methods=["POST"])
+def analyze_language():
+    data = request.json
+    article_text = data.get("article")
+    
+    if not article_text:
+        return jsonify({"message": "Texto do artigo é necessário"}), 400
+
+    # Define the system prompt for GPT-4
+    system_prompt = """
+        Analyze the language used in this text and provide a structured report in Portuguese from Portugal that includes the following elements, each clearly labeled and formatted as a JSON object without any additional text or markers:
+
+        1. Emotionally Charged Terms: List any emotionally charged terms with examples in the format {{term: example sentence}}.
+        2. Explanation ECT: Provide an explanation of how emotionally charged terms could influence readers' perceptions and contribute to the spread of misinformation, specifically using examples from the text to show how these terms affect the narrative.
+
+        3. Biased Language: Identify any biased language with examples in the format {{bias: example sentence}}.
+        4. Explanation BL: Include an explanation of how biased language might suggest a lack of objectivity or push a specific agenda, using specific examples from the text to illustrate how this bias is manifested.
+
+        5. Loaded Terms: Identify any loaded terms with examples in the format {{term: example sentence}}.
+        6. Explanation LT: Discuss their potential to evoke strong emotions and how this can affect readers' ability to assess information critically, providing examples from the text where these terms influence the reader's perception.
+
+        7. Overall Sentiment: Describe the overall sentiment of the text as positive, negative, or neutral.
+        8. Explanation OS: Explain the implications of this sentiment in terms of misinformation, specifically using text examples to demonstrate how the overall sentiment aligns with or contradicts the content and context of the article.
+
+        Additionally, assess for the presence of specific biases, ensuring to report only when evidence is clear:
+        - Partisan Bias: Check if the article disproportionately favors one political party or heavily criticizes another, with examples.
+        - Ideological Bias: Look for indications that the article promotes specific ideological viewpoints, such as conservative or liberal ideologies, with examples.
+        - Issue Bias: Notice if certain issues are emphasized over others in alignment with the outlet's known biases, with examples.
+        - Confirmation Bias: Observe if the article selectively uses facts, studies, or sources that support its viewpoint, ignoring contradicting information, with examples.
+        - Narrative Bias: Identify if the article fits events into a pre-established narrative, framing stories in a way that supports a continuous storyline favored by the outlet, with examples.
+        - Sensationalism: Be aware of sensationalist tactics like misleading headlines, exaggerated details, or a focus on scandalous aspects, with examples.
+
+        Each explanation should be rooted in specific instances from the text to ensure accuracy and relevance. Provide explicit confirmation for each type of bias only when there is undeniable evidence to support its presence to avoid misinforming users.
+    """
+
+    user_prompt = f"""
+    Article: {article_text}
+    """
+    
+    try:
+        # Make an API call to GPT
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=1600,
+            temperature=0.1,
+        )
+        
+        # Capture the language analysis report
+        analysis_report = response.choices[0].message.content
+        print("Language Analysis Report:", analysis_report)
+
+        # Return the analysis in a structured JSON format
+        return jsonify({"language_analysis_report": analysis_report})
+    
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+
+
 
 
 
