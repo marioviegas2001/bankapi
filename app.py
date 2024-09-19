@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from openai import OpenAI
+import json
 
 load_dotenv('API.env')
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -201,9 +202,9 @@ def get_article(article_url):
         """, (article_id,))
         mentioned_sources_rows = cur.fetchall()
 
-        # Fetch questions for the article
+        # Fetch questions for the article (including triggering_phrase)
         cur.execute("""
-            SELECT question, question_importance
+            SELECT question, question_importance, triggering_phrase
             FROM article_questions
             WHERE article_id = %s
             ORDER BY question_importance;
@@ -238,7 +239,7 @@ def get_article(article_url):
                 mentioned_sources["social_media"][source_name] = count
         
         # Organize the questions
-        questions_list = [{"question": question[0], "importance": question[1]} for question in questions]
+        questions_list = [{"question": question[0], "importance": question[1], "triggering_phrase": question[2]} for question in questions]
 
         article_data = {
             "id": article[0],
@@ -268,6 +269,7 @@ def get_article(article_url):
     else:
         conn.close()
         return jsonify({"message": "Article not found"}), 404
+
 
 
 
@@ -472,17 +474,23 @@ def auto_save_article():
                     VALUES (%s, %s, %s, %s)
                 """, (article_id, 'social_media', source_name, count))
 
-        # Insert article questions
         if article_questions:
-            questions = article_questions.split("\n")
-            for i, question in enumerate(questions, start=1):
-                # Remove the numbering from the question
-                question_text = question.split(". ", 1)[-1]
-                question_importance = i
+            # Parse article_questions from string to dictionary
+            try:
+                article_questions = json.loads(article_questions)
+            except (json.JSONDecodeError, TypeError):
+                return jsonify({"message": "Invalid JSON format for article questions"}), 400
+
+            questions_list = article_questions.get("questions", [])
+            for question in questions_list:
+                question_text = question.get("question")
+                triggering_phrase = question.get("triggering_phrase")
+                question_importance = questions_list.index(question) + 1  # Determine the order of importance
+
                 cur.execute("""
-                    INSERT INTO article_questions (article_id, question, question_importance)
-                    VALUES (%s, %s, %s)
-                """, (article_id, question_text, question_importance))
+                        INSERT INTO article_questions (article_id, question, question_importance, triggering_phrase)
+                        VALUES (%s, %s, %s, %s)
+                    """, (article_id, question_text, question_importance, triggering_phrase))
 
         # Insert article category
         if article_category:
@@ -761,22 +769,32 @@ def lateral_reading_questions():
         Conciseness and Clarity: Questions should be concise (no more than 120 characters) and self-contained.
         Answerability: Frame questions that can be answered through lateral reading techniques, ideally by a single reliable source.
         Importance Ranking: Rank the questions from the most critical to the least critical based on the potential impact on understanding the article's trustworthiness.
-        Language: All the questions will be provided in portuguese of Portugal and should always be formulated in portuguese of Portugal.
+        Language: All the questions will be provided in Portuguese of Portugal and should always be formulated in Portuguese of Portugal.
+
     Output Requirement:
-        Produce a ranked list of 10 questions, starting with the most important to the least important, without additional explanations. These questions should probe the trustworthiness of the article effectively, focusing on the critical aspects highlighted in the analysis.
+        Provide a JSON object without any additional text or markers containing a ranked list of 10 questions, organized from the most important to the least important. Each entry should include:
+            - 'question': The question text.
+            - 'triggering_phrase': If the phrase that triggered the question is longer than 10 words, provide the first 10 words exactly as they appear in the article without any alterations or truncation. This precise representation is crucial for text matching applications.
+        This structured output will ensure that the context is clear and exactly represented, focusing on the critical aspects highlighted in the analysis.
+
     Logical Verification:
         Before finalizing questions, verify that each is logically sound and directly relevant to the article's content. Ensure that questions are appropriate for the entities identified and reflect a meaningful inquiry into the article’s claims and credibility.
-    Example Questions (general format for guidance):
-    "What evidence supports the main claims made in the article?"
-    "Is the primary source of the article credible and recognized in their field?"
-    "Are there other expert opinions that support or contradict this perspective?"
-    "How does this information compare with established data or historical context?"
-    "What might be the potential biases of the sources or authors involved?"
-    "Can the statistical data presented be verified through other credible reports?"
-    "How has the topic been treated in other reputable publications?"
-    "Are there recent developments that affect the credibility of the information?"
-    "What are the implications of the article’s claims if they are true?"
-    "Is there a consensus among experts regarding the conclusions drawn?"
+
+    Example Output Format:
+    {
+        "questions": [
+            {
+                "question": "Is the primary source of the article credible and recognized in their field?",
+                "triggering_phrase": "According to a comprehensive study by the University of Example which analyzed"
+            },
+            {
+                "question": "What evidence supports the main claims made in the article?",
+                "triggering_phrase": "Researchers claim that recent data on climate change from multiple sources"
+            },
+            // Additional questions follow in order of decreasing importance...
+        ]
+    }
+
     """
 
     user_prompt = f"""
@@ -789,7 +807,7 @@ def lateral_reading_questions():
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=512,
+            max_tokens=2500,
             temperature=0.1,
         )
         questions = response.choices[0].message.content
